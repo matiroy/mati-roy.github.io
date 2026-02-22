@@ -1,0 +1,1046 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>Laser Labyrinth</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0e1a; font-family: 'Segoe UI', system-ui, sans-serif; color: #e0e0e0; }
+
+#topBar {
+  position: fixed; top: 0; left: 0; right: 0; height: 48px;
+  background: rgba(10, 14, 26, 0.92); border-bottom: 1px solid rgba(100, 200, 255, 0.15);
+  display: flex; align-items: center; justify-content: space-between; padding: 0 16px; z-index: 10;
+  backdrop-filter: blur(8px);
+}
+#topBar .level-info { font-size: 16px; font-weight: 600; letter-spacing: 0.5px; }
+#topBar .level-info span { color: #64d2ff; }
+#topBar .buttons { display: flex; gap: 8px; }
+#topBar button, #bottomBar button {
+  background: rgba(100, 210, 255, 0.1); border: 1px solid rgba(100, 210, 255, 0.3);
+  color: #64d2ff; padding: 6px 16px; border-radius: 6px; cursor: pointer;
+  font-size: 13px; font-weight: 500; transition: all 0.2s;
+}
+#topBar button:hover, #bottomBar button:hover {
+  background: rgba(100, 210, 255, 0.25); border-color: rgba(100, 210, 255, 0.6);
+}
+
+#bottomBar {
+  position: fixed; bottom: 0; left: 0; right: 0; height: 72px;
+  background: rgba(10, 14, 26, 0.92); border-top: 1px solid rgba(100, 200, 255, 0.15);
+  display: flex; align-items: center; justify-content: center; gap: 12px; padding: 0 16px; z-index: 10;
+  backdrop-filter: blur(8px);
+}
+.tool-item {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 6px 14px; border-radius: 8px; cursor: default; opacity: 0.5;
+  border: 1px solid transparent; transition: all 0.2s; user-select: none;
+}
+.tool-item.available { opacity: 1; cursor: grab; }
+.tool-item.available:hover { background: rgba(100, 210, 255, 0.1); border-color: rgba(100, 210, 255, 0.3); }
+.tool-item .icon { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; }
+.tool-item .label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; }
+
+#helpText {
+  position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
+  font-size: 13px; color: rgba(100, 210, 255, 0.6); text-align: center;
+  pointer-events: none; transition: opacity 0.5s; z-index: 10;
+}
+
+#winOverlay {
+  position: fixed; inset: 0; background: rgba(5, 8, 18, 0.85);
+  display: none; align-items: center; justify-content: center; z-index: 100;
+  backdrop-filter: blur(6px);
+}
+#winOverlay.show { display: flex; }
+#winPanel {
+  background: rgba(15, 25, 50, 0.95); border: 1px solid rgba(100, 210, 255, 0.3);
+  border-radius: 16px; padding: 40px 48px; text-align: center;
+  box-shadow: 0 0 60px rgba(100, 210, 255, 0.15);
+}
+#winPanel h2 { font-size: 28px; color: #64d2ff; margin-bottom: 8px; }
+#winPanel p { font-size: 15px; color: rgba(200, 220, 255, 0.7); margin-bottom: 24px; }
+#winPanel button {
+  background: rgba(100, 210, 255, 0.15); border: 1px solid rgba(100, 210, 255, 0.4);
+  color: #64d2ff; padding: 10px 32px; border-radius: 8px; cursor: pointer;
+  font-size: 15px; font-weight: 600; transition: all 0.2s;
+}
+#winPanel button:hover { background: rgba(100, 210, 255, 0.3); }
+
+canvas { display: block; }
+</style>
+</head>
+<body>
+
+<div id="topBar">
+  <div class="level-info">Level <span id="levelNum">1</span>: <span id="levelName">Tutorial</span></div>
+  <div class="buttons">
+    <button id="btnReset">Reset</button>
+    <button id="btnPrev">&#9664; Prev</button>
+    <button id="btnNext">Next &#9654;</button>
+  </div>
+</div>
+
+<canvas id="gameCanvas"></canvas>
+
+<div id="helpText">Drag objects to move &bull; Scroll wheel to rotate &bull; Hit all targets!</div>
+
+<div id="bottomBar" role="toolbar"></div>
+
+<div id="winOverlay">
+  <div id="winPanel">
+    <h2>Level Complete!</h2>
+    <p id="winMsg">All targets destroyed.</p>
+    <button id="btnWinNext">Next Level &#9654;</button>
+  </div>
+</div>
+
+<script>
+// ─── Vector Math ────────────────────────────────────────────────────
+const V = {
+  add: (a, b) => ({ x: a.x + b.x, y: a.y + b.y }),
+  sub: (a, b) => ({ x: a.x - b.x, y: a.y - b.y }),
+  mul: (a, s) => ({ x: a.x * s, y: a.y * s }),
+  dot: (a, b) => a.x * b.x + a.y * b.y,
+  len: (a) => Math.sqrt(a.x * a.x + a.y * a.y),
+  norm: (a) => { const l = V.len(a) || 1; return { x: a.x / l, y: a.y / l }; },
+  rot: (a, ang) => {
+    const c = Math.cos(ang), s = Math.sin(ang);
+    return { x: a.x * c - a.y * s, y: a.x * s + a.y * c };
+  },
+  reflect: (d, n) => {
+    const dn = 2 * V.dot(d, n);
+    return { x: d.x - dn * n.x, y: d.y - dn * n.y };
+  },
+  dist: (a, b) => V.len(V.sub(a, b)),
+  perp: (a) => ({ x: -a.y, y: a.x }),
+  angle: (a) => Math.atan2(a.y, a.x),
+  fromAngle: (ang) => ({ x: Math.cos(ang), y: Math.sin(ang) }),
+};
+
+// ─── Constants ──────────────────────────────────────────────────────
+const GRID = 60;
+const MAX_BOUNCES = 25;
+const DEG15 = Math.PI / 12;
+const COLORS = {
+  white: '#e0f0ff',
+  red: '#ff3355',
+  green: '#33ff88',
+  blue: '#3388ff',
+};
+const GLOW_COLORS = {
+  white: [255, 230, 245],
+  red: [255, 50, 85],
+  green: [50, 255, 136],
+  blue: [50, 136, 255],
+};
+
+// ─── Game Objects ───────────────────────────────────────────────────
+class GameObject {
+  constructor(type, x, y, angle = 0, opts = {}) {
+    this.type = type;
+    this.x = x; this.y = y;
+    this.angle = angle;
+    this.draggable = opts.draggable || false;
+    this.rotatable = opts.rotatable || false;
+    this.color = opts.color || 'white';
+    this.hit = false;
+    this.hitTime = 0;
+    this.startX = x; this.startY = y; this.startAngle = angle;
+  }
+
+  reset() {
+    this.x = this.startX; this.y = this.startY; this.angle = this.startAngle;
+    this.hit = false; this.hitTime = 0;
+  }
+
+  getSegment(halfLen) {
+    const dir = V.fromAngle(this.angle);
+    const perp = V.perp(dir);
+    return {
+      a: { x: this.x - perp.x * halfLen, y: this.y - perp.y * halfLen },
+      b: { x: this.x + perp.x * halfLen, y: this.y + perp.y * halfLen },
+      normal: dir,
+    };
+  }
+
+  containsPoint(px, py, radius = 25) {
+    return V.dist({ x: px, y: py }, { x: this.x, y: this.y }) < radius;
+  }
+}
+
+// ─── Ray Tracing ────────────────────────────────────────────────────
+function raySegmentIntersect(ro, rd, a, b) {
+  const ab = V.sub(b, a);
+  const denom = rd.x * ab.y - rd.y * ab.x;
+  if (Math.abs(denom) < 1e-9) return null;
+  const oa = V.sub(a, ro);
+  const t = (oa.x * ab.y - oa.y * ab.x) / denom;
+  const u = (oa.x * rd.y - oa.y * rd.x) / denom;
+  if (t > 0.5 && u >= 0 && u <= 1) return { t, u, point: V.add(ro, V.mul(rd, t)) };
+  return null;
+}
+
+function rayCircleIntersect(ro, rd, cx, cy, r) {
+  const oc = V.sub(ro, { x: cx, y: cy });
+  const a = V.dot(rd, rd);
+  const b = 2 * V.dot(oc, rd);
+  const c = V.dot(oc, oc) - r * r;
+  const disc = b * b - 4 * a * c;
+  if (disc < 0) return null;
+  const t = (-b - Math.sqrt(disc)) / (2 * a);
+  if (t > 0.5) return { t, point: V.add(ro, V.mul(rd, t)) };
+  return null;
+}
+
+function traceBeams(objects, canvasW, canvasH) {
+  const beams = [];
+  const lasers = objects.filter(o => o.type === 'laser');
+
+  for (const laser of lasers) {
+    const startDir = V.fromAngle(laser.angle);
+    const stack = [{ origin: { x: laser.x, y: laser.y }, dir: startDir, color: 'white', depth: 0 }];
+
+    while (stack.length > 0) {
+      const { origin, dir, color, depth } = stack.pop();
+      if (depth > MAX_BOUNCES) continue;
+
+      let closest = null;
+      let closestObj = null;
+      let closestT = Infinity;
+
+      for (const obj of objects) {
+        if (obj.type === 'laser') continue;
+        let hit = null;
+
+        if (obj.type === 'mirror' || obj.type === 'splitter') {
+          const seg = obj.getSegment(28);
+          hit = raySegmentIntersect(origin, dir, seg.a, seg.b);
+        } else if (obj.type === 'wall') {
+          const seg = obj.getSegment(30);
+          hit = raySegmentIntersect(origin, dir, seg.a, seg.b);
+        } else if (obj.type === 'target') {
+          hit = rayCircleIntersect(origin, dir, obj.x, obj.y, 18);
+        } else if (obj.type === 'prism') {
+          hit = rayCircleIntersect(origin, dir, obj.x, obj.y, 22);
+        } else if (obj.type === 'filter') {
+          const seg = obj.getSegment(24);
+          hit = raySegmentIntersect(origin, dir, seg.a, seg.b);
+        }
+
+        if (hit && hit.t < closestT) {
+          closestT = hit.t;
+          closest = hit;
+          closestObj = obj;
+        }
+      }
+
+      if (closest) {
+        beams.push({ from: origin, to: closest.point, color });
+
+        if (closestObj.type === 'mirror') {
+          const seg = closestObj.getSegment(28);
+          const segDir = V.norm(V.sub(seg.b, seg.a));
+          let normal = V.perp(segDir);
+          if (V.dot(dir, normal) > 0) normal = V.mul(normal, -1);
+          const reflected = V.reflect(dir, normal);
+          stack.push({ origin: closest.point, dir: V.norm(reflected), color, depth: depth + 1 });
+        } else if (closestObj.type === 'splitter') {
+          const seg = closestObj.getSegment(28);
+          const segDir = V.norm(V.sub(seg.b, seg.a));
+          let normal = V.perp(segDir);
+          if (V.dot(dir, normal) > 0) normal = V.mul(normal, -1);
+          const reflected = V.reflect(dir, normal);
+          stack.push({ origin: closest.point, dir: V.norm(reflected), color, depth: depth + 1 });
+          stack.push({ origin: closest.point, dir: V.norm(dir), color, depth: depth + 1 });
+        } else if (closestObj.type === 'prism') {
+          if (color === 'white') {
+            const baseAngle = V.angle(dir);
+            const spread = 0.25;
+            stack.push({ origin: closest.point, dir: V.fromAngle(baseAngle - spread), color: 'red', depth: depth + 1 });
+            stack.push({ origin: closest.point, dir: V.fromAngle(baseAngle), color: 'green', depth: depth + 1 });
+            stack.push({ origin: closest.point, dir: V.fromAngle(baseAngle + spread), color: 'blue', depth: depth + 1 });
+          } else {
+            stack.push({ origin: closest.point, dir: V.norm(dir), color, depth: depth + 1 });
+          }
+        } else if (closestObj.type === 'filter') {
+          if (color === closestObj.color || color === 'white') {
+            stack.push({ origin: closest.point, dir: V.norm(dir), color: closestObj.color, depth: depth + 1 });
+          }
+        } else if (closestObj.type === 'target') {
+          if (closestObj.color === 'white' || closestObj.color === color || color === 'white') {
+            closestObj.hit = true;
+            closestObj.hitTime = performance.now();
+          }
+        }
+      } else {
+        const farT = Math.max(canvasW, canvasH) * 2;
+        beams.push({ from: origin, to: V.add(origin, V.mul(dir, farT)), color });
+      }
+    }
+  }
+  return beams;
+}
+
+// ─── Particle System ────────────────────────────────────────────────
+class Particle {
+  constructor(x, y, color) {
+    this.x = x; this.y = y;
+    const ang = Math.random() * Math.PI * 2;
+    const spd = 1 + Math.random() * 3;
+    this.vx = Math.cos(ang) * spd;
+    this.vy = Math.sin(ang) * spd;
+    this.life = 1;
+    this.decay = 0.015 + Math.random() * 0.02;
+    this.color = color;
+    this.size = 2 + Math.random() * 3;
+  }
+  update() {
+    this.x += this.vx; this.y += this.vy;
+    this.vx *= 0.98; this.vy *= 0.98;
+    this.life -= this.decay;
+  }
+}
+
+const particles = [];
+
+function spawnParticles(x, y, color, count = 12) {
+  const gc = GLOW_COLORS[color] || GLOW_COLORS.white;
+  for (let i = 0; i < count; i++) {
+    particles.push(new Particle(x, y, gc));
+  }
+}
+
+// ─── Level Definitions ─────────────────────────────────────────────
+const LEVELS = [
+  {
+    name: 'Tutorial',
+    objects: [
+      { type: 'laser', x: 2, y: 4, angle: 0 },
+      { type: 'mirror', x: 8, y: 4, angle: Math.PI / 4, draggable: true, rotatable: true },
+      { type: 'target', x: 8, y: 8 },
+    ],
+  },
+  {
+    name: 'Corner Shot',
+    objects: [
+      { type: 'laser', x: 1, y: 2, angle: 0 },
+      { type: 'wall', x: 5, y: 2, angle: Math.PI / 2 },
+      { type: 'wall', x: 5, y: 4, angle: Math.PI / 2 },
+      { type: 'mirror', x: 4, y: 2, angle: -Math.PI / 4, draggable: true, rotatable: true },
+      { type: 'mirror', x: 4, y: 7, angle: Math.PI / 4, draggable: true, rotatable: true },
+      { type: 'target', x: 9, y: 7 },
+    ],
+  },
+  {
+    name: 'Split Decision',
+    objects: [
+      { type: 'laser', x: 1, y: 4, angle: 0 },
+      { type: 'splitter', x: 5, y: 4, angle: Math.PI / 4, draggable: true, rotatable: true },
+      { type: 'target', x: 9, y: 4 },
+      { type: 'target', x: 5, y: 8 },
+    ],
+  },
+  {
+    name: 'Prism Basics',
+    objects: [
+      { type: 'laser', x: 1, y: 4, angle: 0 },
+      { type: 'prism', x: 5, y: 4, angle: 0, draggable: true, rotatable: true },
+      { type: 'target', x: 10, y: 2, color: 'red' },
+      { type: 'target', x: 10, y: 4, color: 'green' },
+      { type: 'target', x: 10, y: 6, color: 'blue' },
+    ],
+  },
+  {
+    name: 'Filter Maze',
+    objects: [
+      { type: 'laser', x: 1, y: 4, angle: 0 },
+      { type: 'prism', x: 4, y: 4, angle: 0, draggable: true, rotatable: true },
+      { type: 'filter', x: 8, y: 2, angle: Math.PI / 2, color: 'red' },
+      { type: 'filter', x: 8, y: 6, angle: Math.PI / 2, color: 'blue' },
+      { type: 'mirror', x: 10, y: 2, angle: Math.PI / 4, draggable: true, rotatable: true },
+      { type: 'target', x: 10, y: 5, color: 'red' },
+      { type: 'target', x: 10, y: 7, color: 'blue' },
+      { type: 'target', x: 8, y: 4, color: 'green' },
+    ],
+  },
+  {
+    name: 'Complex Reflections',
+    objects: [
+      { type: 'laser', x: 1, y: 1, angle: Math.PI / 4 },
+      { type: 'wall', x: 5, y: 3, angle: 0 },
+      { type: 'wall', x: 5, y: 5, angle: 0 },
+      { type: 'mirror', x: 4, y: 4, angle: 0, draggable: true, rotatable: true },
+      { type: 'mirror', x: 7, y: 2, angle: Math.PI / 4, draggable: true, rotatable: true },
+      { type: 'mirror', x: 9, y: 6, angle: -Math.PI / 4, draggable: true, rotatable: true },
+      { type: 'target', x: 9, y: 2 },
+      { type: 'target', x: 3, y: 8 },
+    ],
+  },
+  {
+    name: 'Full Spectrum',
+    objects: [
+      { type: 'laser', x: 1, y: 4, angle: 0 },
+      { type: 'prism', x: 4, y: 4, angle: 0, draggable: true, rotatable: true },
+      { type: 'mirror', x: 7, y: 2, angle: Math.PI / 4, draggable: true, rotatable: true },
+      { type: 'mirror', x: 7, y: 6, angle: -Math.PI / 4, draggable: true, rotatable: true },
+      { type: 'filter', x: 9, y: 2, angle: Math.PI / 2, color: 'red' },
+      { type: 'filter', x: 9, y: 6, angle: Math.PI / 2, color: 'blue' },
+      { type: 'target', x: 11, y: 2, color: 'red' },
+      { type: 'target', x: 9, y: 4, color: 'green' },
+      { type: 'target', x: 11, y: 6, color: 'blue' },
+      { type: 'target', x: 5, y: 7, color: 'green' },
+    ],
+  },
+  {
+    name: 'Grand Finale',
+    objects: [
+      { type: 'laser', x: 1, y: 3, angle: 0 },
+      { type: 'prism', x: 4, y: 3, angle: 0, draggable: true, rotatable: true },
+      { type: 'splitter', x: 7, y: 1, angle: Math.PI / 4, draggable: true, rotatable: true },
+      { type: 'mirror', x: 10, y: 1, angle: Math.PI / 4, draggable: true, rotatable: true },
+      { type: 'mirror', x: 3, y: 7, angle: -Math.PI / 4, draggable: true, rotatable: true },
+      { type: 'mirror', x: 10, y: 7, angle: -Math.PI / 4, draggable: true, rotatable: true },
+      { type: 'filter', x: 7, y: 5, angle: Math.PI / 2, color: 'green' },
+      { type: 'wall', x: 6, y: 3, angle: Math.PI / 2 },
+      { type: 'target', x: 12, y: 1, color: 'red' },
+      { type: 'target', x: 7, y: 7, color: 'green' },
+      { type: 'target', x: 12, y: 7, color: 'blue' },
+      { type: 'target', x: 10, y: 4, color: 'red' },
+      { type: 'target', x: 1, y: 7, color: 'blue' },
+    ],
+  },
+];
+
+// ─── Game State ─────────────────────────────────────────────────────
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+let W, H;
+let currentLevel = 0;
+let objects = [];
+let beams = [];
+let dragging = null;
+let dragOffset = { x: 0, y: 0 };
+let hoveredObj = null;
+let levelWon = false;
+let winShownTime = 0;
+
+function resize() {
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas.width = W;
+  canvas.height = H;
+}
+window.addEventListener('resize', resize);
+resize();
+
+function gridToScreen(gx, gy) {
+  const ox = 60;
+  const oy = 70;
+  return { x: ox + gx * GRID, y: oy + gy * GRID };
+}
+
+function loadLevel(idx) {
+  currentLevel = Math.max(0, Math.min(idx, LEVELS.length - 1));
+  const level = LEVELS[currentLevel];
+  objects = level.objects.map(o => {
+    const pos = gridToScreen(o.x, o.y);
+    return new GameObject(o.type, pos.x, pos.y, o.angle || 0, {
+      draggable: o.draggable || false,
+      rotatable: o.rotatable || false,
+      color: o.color || 'white',
+    });
+  });
+  levelWon = false;
+  document.getElementById('winOverlay').classList.remove('show');
+  document.getElementById('levelNum').textContent = currentLevel + 1;
+  document.getElementById('levelName').textContent = level.name;
+  updateToolbar();
+  updateHelpText();
+}
+
+function resetLevel() {
+  objects.forEach(o => o.reset());
+  levelWon = false;
+  document.getElementById('winOverlay').classList.remove('show');
+}
+
+function updateToolbar() {
+  const bar = document.getElementById('bottomBar');
+  bar.innerHTML = '';
+  const types = ['mirror', 'prism', 'splitter', 'filter'];
+  const icons = {
+    mirror: drawMirrorIcon,
+    prism: drawPrismIcon,
+    splitter: drawSplitterIcon,
+    filter: drawFilterIcon,
+  };
+  const typesInLevel = new Set(objects.filter(o => o.draggable).map(o => o.type));
+  for (const t of types) {
+    const div = document.createElement('div');
+    div.className = 'tool-item' + (typesInLevel.has(t) ? ' available' : '');
+    const iconCanvas = document.createElement('canvas');
+    iconCanvas.width = 32; iconCanvas.height = 32;
+    const iconCtx = iconCanvas.getContext('2d');
+    if (icons[t]) icons[t](iconCtx, 16, 16);
+    const iconDiv = document.createElement('div');
+    iconDiv.className = 'icon';
+    iconDiv.appendChild(iconCanvas);
+    const label = document.createElement('div');
+    label.className = 'label';
+    label.textContent = t;
+    div.appendChild(iconDiv);
+    div.appendChild(label);
+    bar.appendChild(div);
+  }
+
+  const rotateInfo = document.createElement('div');
+  rotateInfo.style.cssText = 'display:flex;gap:6px;margin-left:20px;align-items:center;';
+  const rotLeft = document.createElement('button');
+  rotLeft.textContent = '\u21b6 Rotate';
+  rotLeft.onclick = () => { if (hoveredObj && hoveredObj.rotatable) hoveredObj.angle -= DEG15; };
+  const rotRight = document.createElement('button');
+  rotRight.textContent = 'Rotate \u21b7';
+  rotRight.onclick = () => { if (hoveredObj && hoveredObj.rotatable) hoveredObj.angle += DEG15; };
+  rotateInfo.appendChild(rotLeft);
+  rotateInfo.appendChild(rotRight);
+  bar.appendChild(rotateInfo);
+}
+
+function updateHelpText() {
+  const el = document.getElementById('helpText');
+  if (currentLevel === 0) {
+    el.textContent = 'Drag the mirror and scroll to rotate it. Aim the laser at the target!';
+  } else {
+    el.textContent = 'Drag objects to move \u2022 Scroll wheel to rotate \u2022 Hit all targets!';
+  }
+}
+
+// ─── Mini icon renderers for toolbar ────────────────────────────────
+function drawMirrorIcon(ctx, cx, cy) {
+  ctx.save();
+  ctx.strokeStyle = '#88ccff'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(cx - 10, cy + 10); ctx.lineTo(cx + 10, cy - 10); ctx.stroke();
+  ctx.strokeStyle = 'rgba(136,204,255,0.3)'; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(cx - 10, cy + 10); ctx.lineTo(cx + 10, cy - 10); ctx.stroke();
+  ctx.restore();
+}
+
+function drawPrismIcon(ctx, cx, cy) {
+  ctx.save();
+  ctx.strokeStyle = '#e0f0ff'; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - 10); ctx.lineTo(cx + 10, cy + 8); ctx.lineTo(cx - 10, cy + 8); ctx.closePath();
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(200,230,255,0.1)'; ctx.fill();
+  ctx.restore();
+}
+
+function drawSplitterIcon(ctx, cx, cy) {
+  ctx.save();
+  ctx.strokeStyle = '#88ccff'; ctx.lineWidth = 1.5; ctx.setLineDash([3, 3]);
+  ctx.beginPath(); ctx.moveTo(cx - 10, cy + 10); ctx.lineTo(cx + 10, cy - 10); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
+function drawFilterIcon(ctx, cx, cy) {
+  ctx.save();
+  ctx.fillStyle = 'rgba(255,100,100,0.4)';
+  ctx.fillRect(cx - 10, cy - 8, 20, 16);
+  ctx.strokeStyle = '#ff6666'; ctx.lineWidth = 1;
+  ctx.strokeRect(cx - 10, cy - 8, 20, 16);
+  ctx.restore();
+}
+
+// ─── Input Handling ─────────────────────────────────────────────────
+canvas.addEventListener('mousedown', e => {
+  if (levelWon) return;
+  const mx = e.clientX, my = e.clientY;
+  for (let i = objects.length - 1; i >= 0; i--) {
+    const obj = objects[i];
+    if (obj.draggable && obj.containsPoint(mx, my, 30)) {
+      dragging = obj;
+      dragOffset.x = mx - obj.x;
+      dragOffset.y = my - obj.y;
+      hoveredObj = obj;
+      canvas.style.cursor = 'grabbing';
+      return;
+    }
+  }
+});
+
+canvas.addEventListener('mousemove', e => {
+  const mx = e.clientX, my = e.clientY;
+  if (dragging) {
+    dragging.x = Math.max(30, Math.min(W - 30, mx - dragOffset.x));
+    dragging.y = Math.max(58, Math.min(H - 82, my - dragOffset.y));
+    return;
+  }
+  let found = null;
+  for (let i = objects.length - 1; i >= 0; i--) {
+    if (objects[i].draggable && objects[i].containsPoint(mx, my, 30)) {
+      found = objects[i];
+      break;
+    }
+  }
+  hoveredObj = found;
+  canvas.style.cursor = found ? 'grab' : 'default';
+});
+
+canvas.addEventListener('mouseup', () => {
+  if (dragging) {
+    dragging = null;
+    canvas.style.cursor = hoveredObj ? 'grab' : 'default';
+  }
+});
+
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  if (hoveredObj && hoveredObj.rotatable) {
+    hoveredObj.angle += (e.deltaY > 0 ? 1 : -1) * DEG15;
+  }
+}, { passive: false });
+
+// Touch support
+canvas.addEventListener('touchstart', e => {
+  if (levelWon) return;
+  const t = e.touches[0];
+  const mx = t.clientX, my = t.clientY;
+  for (let i = objects.length - 1; i >= 0; i--) {
+    const obj = objects[i];
+    if (obj.draggable && obj.containsPoint(mx, my, 40)) {
+      dragging = obj;
+      dragOffset.x = mx - obj.x;
+      dragOffset.y = my - obj.y;
+      hoveredObj = obj;
+      e.preventDefault();
+      return;
+    }
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchmove', e => {
+  if (dragging) {
+    const t = e.touches[0];
+    dragging.x = Math.max(30, Math.min(W - 30, t.clientX - dragOffset.x));
+    dragging.y = Math.max(58, Math.min(H - 82, t.clientY - dragOffset.y));
+    e.preventDefault();
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchend', () => { dragging = null; });
+
+// ─── Button Handlers ────────────────────────────────────────────────
+document.getElementById('btnReset').onclick = resetLevel;
+document.getElementById('btnPrev').onclick = () => loadLevel(currentLevel - 1);
+document.getElementById('btnNext').onclick = () => loadLevel(currentLevel + 1);
+document.getElementById('btnWinNext').onclick = () => loadLevel(currentLevel + 1);
+
+// ─── Rendering ──────────────────────────────────────────────────────
+function drawGrid() {
+  ctx.fillStyle = 'rgba(100, 180, 255, 0.06)';
+  for (let x = GRID; x < W; x += GRID) {
+    for (let y = GRID; y < H; y += GRID) {
+      ctx.beginPath();
+      ctx.arc(x, y, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
+function drawBeam(from, to, color) {
+  const gc = GLOW_COLORS[color] || GLOW_COLORS.white;
+
+  ctx.save();
+  ctx.lineCap = 'round';
+
+  ctx.globalAlpha = 0.08;
+  ctx.strokeStyle = `rgb(${gc[0]},${gc[1]},${gc[2]})`;
+  ctx.lineWidth = 14;
+  ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke();
+
+  ctx.globalAlpha = 0.2;
+  ctx.lineWidth = 6;
+  ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke();
+
+  ctx.globalAlpha = 0.8;
+  ctx.strokeStyle = COLORS[color] || COLORS.white;
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke();
+
+  ctx.restore();
+}
+
+function drawLaser(obj) {
+  const dir = V.fromAngle(obj.angle);
+  ctx.save();
+
+  ctx.shadowColor = '#64d2ff';
+  ctx.shadowBlur = 15;
+  ctx.fillStyle = '#1a2a40';
+  ctx.strokeStyle = '#64d2ff';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(obj.x, obj.y, 14, 0, Math.PI * 2);
+  ctx.fill(); ctx.stroke();
+
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = '#64d2ff';
+  ctx.beginPath();
+  ctx.arc(obj.x + dir.x * 10, obj.y + dir.y * 10, 4, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = 'rgba(100,210,255,0.3)';
+  ctx.beginPath();
+  ctx.arc(obj.x + dir.x * 10, obj.y + dir.y * 10, 7, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function drawMirror(obj) {
+  const seg = obj.getSegment(28);
+  const isHovered = hoveredObj === obj;
+  const isDraggable = obj.draggable;
+
+  ctx.save();
+  if (isHovered) {
+    ctx.shadowColor = '#88ccff';
+    ctx.shadowBlur = 12;
+  } else if (isDraggable) {
+    const pulse = Math.sin(performance.now() * 0.003) * 0.15 + 0.85;
+    ctx.globalAlpha = pulse;
+  }
+
+  ctx.strokeStyle = isHovered ? '#aaddff' : '#6699cc';
+  ctx.lineWidth = 3;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(seg.a.x, seg.a.y);
+  ctx.lineTo(seg.b.x, seg.b.y);
+  ctx.stroke();
+
+  ctx.strokeStyle = isHovered ? 'rgba(170,220,255,0.25)' : 'rgba(100,150,200,0.15)';
+  ctx.lineWidth = 8;
+  ctx.beginPath();
+  ctx.moveTo(seg.a.x, seg.a.y);
+  ctx.lineTo(seg.b.x, seg.b.y);
+  ctx.stroke();
+
+  const bDir = V.norm(V.sub(seg.b, seg.a));
+  const backOff = V.perp(bDir);
+  ctx.strokeStyle = 'rgba(100,150,200,0.2)';
+  ctx.lineWidth = 1;
+  for (let i = -2; i <= 2; i++) {
+    const p = V.add({ x: obj.x, y: obj.y }, V.mul(bDir, i * 10));
+    ctx.beginPath();
+    ctx.moveTo(p.x + backOff.x * 4, p.y + backOff.y * 4);
+    ctx.lineTo(p.x + backOff.x * 10, p.y + backOff.y * 10);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+function drawSplitter(obj) {
+  const seg = obj.getSegment(28);
+  const isHovered = hoveredObj === obj;
+
+  ctx.save();
+  if (isHovered) {
+    ctx.shadowColor = '#88ccff';
+    ctx.shadowBlur = 12;
+  }
+
+  ctx.setLineDash([6, 6]);
+  ctx.strokeStyle = isHovered ? '#aaddff' : '#5588aa';
+  ctx.lineWidth = 2.5;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(seg.a.x, seg.a.y);
+  ctx.lineTo(seg.b.x, seg.b.y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.strokeStyle = 'rgba(85,136,170,0.15)';
+  ctx.lineWidth = 8;
+  ctx.beginPath();
+  ctx.moveTo(seg.a.x, seg.a.y);
+  ctx.lineTo(seg.b.x, seg.b.y);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function drawPrism(obj) {
+  const isHovered = hoveredObj === obj;
+  const size = 22;
+  ctx.save();
+  ctx.translate(obj.x, obj.y);
+  ctx.rotate(obj.angle);
+
+  if (isHovered) {
+    ctx.shadowColor = '#e0f0ff';
+    ctx.shadowBlur = 12;
+  }
+
+  ctx.beginPath();
+  ctx.moveTo(0, -size);
+  ctx.lineTo(size * 0.866, size * 0.5);
+  ctx.lineTo(-size * 0.866, size * 0.5);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(200, 230, 255, 0.08)';
+  ctx.fill();
+  ctx.strokeStyle = isHovered ? '#c0e0ff' : 'rgba(200,230,255,0.5)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  const grad = ctx.createLinearGradient(-size, 0, size, 0);
+  grad.addColorStop(0, 'rgba(255,50,80,0.15)');
+  grad.addColorStop(0.5, 'rgba(50,255,130,0.15)');
+  grad.addColorStop(1, 'rgba(50,130,255,0.15)');
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function drawTarget(obj) {
+  const pulse = Math.sin(performance.now() * 0.004) * 0.2 + 0.8;
+  const gc = GLOW_COLORS[obj.color] || GLOW_COLORS.white;
+  const colStr = `rgb(${gc[0]},${gc[1]},${gc[2]})`;
+
+  ctx.save();
+
+  if (obj.hit) {
+    ctx.shadowColor = colStr;
+    ctx.shadowBlur = 25;
+    ctx.fillStyle = colStr;
+    ctx.globalAlpha = 0.3;
+    ctx.beginPath();
+    ctx.arc(obj.x, obj.y, 20 * pulse, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = colStr;
+    ctx.beginPath();
+    ctx.arc(obj.x, obj.y, 10, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    ctx.strokeStyle = `rgba(${gc[0]},${gc[1]},${gc[2]},${0.4 + pulse * 0.2})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(obj.x, obj.y, 14, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(obj.x, obj.y, 6, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.fillStyle = `rgba(${gc[0]},${gc[1]},${gc[2]},0.15)`;
+    ctx.beginPath();
+    ctx.arc(obj.x, obj.y, 14, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+function drawWall(obj) {
+  const seg = obj.getSegment(30);
+  ctx.save();
+  ctx.strokeStyle = '#445566';
+  ctx.lineWidth = 6;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(seg.a.x, seg.a.y);
+  ctx.lineTo(seg.b.x, seg.b.y);
+  ctx.stroke();
+
+  ctx.strokeStyle = 'rgba(60,80,100,0.3)';
+  ctx.lineWidth = 12;
+  ctx.beginPath();
+  ctx.moveTo(seg.a.x, seg.a.y);
+  ctx.lineTo(seg.b.x, seg.b.y);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawFilter(obj) {
+  const seg = obj.getSegment(24);
+  const gc = GLOW_COLORS[obj.color] || GLOW_COLORS.white;
+  const isHovered = hoveredObj === obj;
+
+  ctx.save();
+  ctx.strokeStyle = `rgba(${gc[0]},${gc[1]},${gc[2]},0.7)`;
+  ctx.lineWidth = 4;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(seg.a.x, seg.a.y);
+  ctx.lineTo(seg.b.x, seg.b.y);
+  ctx.stroke();
+
+  ctx.fillStyle = `rgba(${gc[0]},${gc[1]},${gc[2]},0.12)`;
+  const dir = V.norm(V.sub(seg.b, seg.a));
+  const n = V.perp(dir);
+  ctx.beginPath();
+  ctx.moveTo(seg.a.x - n.x * 6, seg.a.y - n.y * 6);
+  ctx.lineTo(seg.b.x - n.x * 6, seg.b.y - n.y * 6);
+  ctx.lineTo(seg.b.x + n.x * 6, seg.b.y + n.y * 6);
+  ctx.lineTo(seg.a.x + n.x * 6, seg.a.y + n.y * 6);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    ctx.save();
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = `rgb(${p.color[0]},${p.color[1]},${p.color[2]})`;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.globalAlpha = p.life * 0.3;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * p.life * 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+function drawRotateHint(obj) {
+  if (!obj || !obj.rotatable || dragging) return;
+  ctx.save();
+  ctx.strokeStyle = 'rgba(100,210,255,0.2)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath();
+  ctx.arc(obj.x, obj.y, 35, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  const a1 = obj.angle - 0.5;
+  const a2 = obj.angle + 0.5;
+  ctx.strokeStyle = 'rgba(100,210,255,0.35)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(obj.x, obj.y, 35, a1, a2);
+  ctx.stroke();
+
+  const endX = obj.x + Math.cos(a2) * 35;
+  const endY = obj.y + Math.sin(a2) * 35;
+  ctx.fillStyle = 'rgba(100,210,255,0.4)';
+  ctx.beginPath();
+  ctx.moveTo(endX, endY);
+  ctx.lineTo(endX - 5, endY - 3);
+  ctx.lineTo(endX - 3, endY + 4);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.restore();
+}
+
+// ─── Game Loop ──────────────────────────────────────────────────────
+let prevHitStates = new Map();
+
+function update() {
+  objects.forEach(o => { if (o.type === 'target') o.hit = false; });
+
+  beams = traceBeams(objects, W, H);
+
+  const targets = objects.filter(o => o.type === 'target');
+  for (const t of targets) {
+    const wasHit = prevHitStates.get(t) || false;
+    if (t.hit && !wasHit) {
+      spawnParticles(t.x, t.y, t.color, 20);
+    }
+    prevHitStates.set(t, t.hit);
+  }
+
+  for (let i = particles.length - 1; i >= 0; i--) {
+    particles[i].update();
+    if (particles[i].life <= 0) particles.splice(i, 1);
+  }
+
+  if (!levelWon && targets.length > 0 && targets.every(t => t.hit)) {
+    levelWon = true;
+    winShownTime = performance.now();
+    targets.forEach(t => spawnParticles(t.x, t.y, t.color, 30));
+    setTimeout(() => {
+      document.getElementById('winOverlay').classList.add('show');
+      document.getElementById('winMsg').textContent =
+        currentLevel < LEVELS.length - 1
+          ? 'All targets destroyed! Ready for the next challenge?'
+          : 'Congratulations! You completed all levels!';
+      document.getElementById('btnWinNext').textContent =
+        currentLevel < LEVELS.length - 1 ? 'Next Level \u25b6' : 'Play Again';
+      document.getElementById('btnWinNext').onclick = () => {
+        if (currentLevel < LEVELS.length - 1) loadLevel(currentLevel + 1);
+        else loadLevel(0);
+      };
+    }, 800);
+  }
+}
+
+function render() {
+  ctx.clearRect(0, 0, W, H);
+
+  const bgGrad = ctx.createRadialGradient(W / 2, H / 2, 100, W / 2, H / 2, Math.max(W, H));
+  bgGrad.addColorStop(0, '#0f1628');
+  bgGrad.addColorStop(1, '#060a14');
+  ctx.fillStyle = bgGrad;
+  ctx.fillRect(0, 0, W, H);
+
+  drawGrid();
+
+  for (const obj of objects) {
+    switch (obj.type) {
+      case 'wall': drawWall(obj); break;
+      case 'filter': drawFilter(obj); break;
+    }
+  }
+
+  for (const beam of beams) {
+    drawBeam(beam.from, beam.to, beam.color);
+  }
+
+  for (const obj of objects) {
+    switch (obj.type) {
+      case 'laser': drawLaser(obj); break;
+      case 'mirror': drawMirror(obj); break;
+      case 'splitter': drawSplitter(obj); break;
+      case 'prism': drawPrism(obj); break;
+      case 'target': drawTarget(obj); break;
+    }
+  }
+
+  drawRotateHint(hoveredObj);
+  drawParticles();
+
+  if (levelWon) {
+    const t = Math.min((performance.now() - winShownTime) / 500, 1);
+    ctx.save();
+    ctx.globalAlpha = t * 0.15;
+    ctx.fillStyle = '#64d2ff';
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+  }
+}
+
+function gameLoop() {
+  update();
+  render();
+  requestAnimationFrame(gameLoop);
+}
+
+loadLevel(0);
+gameLoop();
+</script>
+</body>
+</html>
