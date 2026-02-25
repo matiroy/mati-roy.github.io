@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Visualiseur d'investissement indiciel</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  background: #f5f7fa;
+  color: #1a1a2e;
+  min-height: 100vh;
+  padding: 20px;
+}
+
+h1 {
+  text-align: center;
+  font-size: 1.6rem;
+  margin-bottom: 6px;
+  color: #16213e;
+}
+
+.subtitle {
+  text-align: center;
+  color: #555;
+  font-size: 0.95rem;
+  margin-bottom: 24px;
+}
+
+.container {
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.summary {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+
+.summary-card {
+  background: #fff;
+  border-radius: 10px;
+  padding: 14px 22px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+  text-align: center;
+  min-width: 200px;
+}
+
+.summary-card .label {
+  font-size: 0.8rem;
+  color: #777;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+
+.summary-card .value {
+  font-size: 1.35rem;
+  font-weight: 700;
+}
+
+.summary-card .value.match { color: #27ae60; }
+.summary-card .value.diverge { color: #e67e22; }
+
+.viz-wrapper {
+  background: #fff;
+  border-radius: 12px;
+  padding: 24px 20px 12px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.07);
+  margin-bottom: 24px;
+  overflow-x: auto;
+}
+
+#vizSvg {
+  display: block;
+}
+
+.controls-section {
+  background: #fff;
+  border-radius: 12px;
+  padding: 20px 24px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.07);
+  margin-bottom: 16px;
+}
+
+.controls-section h2 {
+  font-size: 1.05rem;
+  margin-bottom: 14px;
+  color: #16213e;
+  border-bottom: 2px solid #e8ecf1;
+  padding-bottom: 6px;
+}
+
+.control-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.control-row label {
+  min-width: 180px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.control-row input[type=range] {
+  flex: 1;
+  min-width: 120px;
+  accent-color: #3a86ff;
+}
+
+.control-row .val {
+  min-width: 60px;
+  text-align: right;
+  font-size: 0.85rem;
+  color: #555;
+  font-variant-numeric: tabular-nums;
+}
+
+.mode-toggle {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.mode-toggle button {
+  padding: 8px 18px;
+  border: 2px solid #3a86ff;
+  border-radius: 8px;
+  background: #fff;
+  color: #3a86ff;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.mode-toggle button.active {
+  background: #3a86ff;
+  color: #fff;
+}
+
+.mode-toggle button:hover:not(.active) {
+  background: #edf2ff;
+}
+
+.custom-weights-section {
+  display: none;
+}
+
+.custom-weights-section.visible {
+  display: block;
+}
+
+.company-color-dot {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+@media (max-width: 700px) {
+  .control-row label { min-width: 120px; font-size: 0.82rem; }
+  .summary-card { min-width: 140px; padding: 10px 14px; }
+  .summary-card .value { font-size: 1.1rem; }
+  h1 { font-size: 1.25rem; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Visualiseur d'investissement indiciel</h1>
+  <p class="subtitle">Découvrez comment un investissement dans un fonds indiciel suit automatiquement le marché</p>
+
+  <div class="summary" id="summary"></div>
+
+  <div class="viz-wrapper">
+    <svg id="vizSvg"></svg>
+  </div>
+
+  <div class="mode-toggle">
+    <button id="btnCapWeight" class="active" onclick="setMode('cap')">Pondération par capitalisation</button>
+    <button id="btnCustom" onclick="setMode('custom')">Pondération personnalisée</button>
+  </div>
+
+  <div class="controls-section">
+    <h2>Contrôles du marché</h2>
+    <div class="control-row">
+      <label>Croissance du marché</label>
+      <input type="range" id="marketGrowth" min="-50" max="100" value="0" step="1" oninput="onMarketGrowth(this.value)">
+      <span class="val" id="marketGrowthVal">0 %</span>
+    </div>
+    <div class="control-row" id="investFractionRow">
+      <label>Fraction investie</label>
+      <input type="range" id="investFraction" min="1" max="100" value="15" step="1" oninput="onInvestFraction(this.value)">
+      <span class="val" id="investFractionVal">15 %</span>
+    </div>
+  </div>
+
+  <div class="controls-section">
+    <h2>Capitalisation par entreprise</h2>
+    <div id="companySliders"></div>
+  </div>
+
+  <div class="controls-section custom-weights-section" id="customWeightsSection">
+    <h2>Poids personnalisés du portefeuille</h2>
+    <p style="font-size:0.85rem;color:#777;margin-bottom:12px;">Ajustez la fraction détenue pour chaque entreprise individuellement.</p>
+    <div id="customSliders"></div>
+  </div>
+</div>
+
+<script>
+var COLORS = [
+  '#3a86ff', '#ff006e', '#8338ec', '#fb5607',
+  '#06d6a0', '#118ab2', '#e63946', '#2ec4b6'
+];
+
+var companiesInit = [
+  { name: 'Apple',     cap: 3400 },
+  { name: 'Microsoft', cap: 3100 },
+  { name: 'NVIDIA',    cap: 2900 },
+  { name: 'Alphabet',  cap: 2100 },
+  { name: 'Amazon',    cap: 2000 },
+  { name: 'Meta',      cap: 1500 },
+  { name: 'Tesla',     cap: 1100 },
+  { name: 'TSMC',      cap: 900  }
+];
+
+var state = {
+  mode: 'cap',
+  marketGrowth: 0,
+  investFraction: 15,
+  companies: companiesInit.map(function(c, i) {
+    return {
+      name: c.name,
+      cap: c.cap,
+      baseCap: c.cap,
+      capMultiplier: 1,
+      color: COLORS[i],
+      customWeight: 15
+    };
+  })
+};
+
+function totalMarketCap() {
+  var g = 1 + state.marketGrowth / 100;
+  return state.companies.reduce(function(s, c) {
+    return s + c.baseCap * c.capMultiplier * g;
+  }, 0);
+}
+
+function companyCurrentCap(c) {
+  return c.baseCap * c.capMultiplier * (1 + state.marketGrowth / 100);
+}
+
+function portfolioValue() {
+  if (state.mode === 'cap') {
+    return totalMarketCap() * (state.investFraction / 100);
+  }
+  return state.companies.reduce(function(s, c) {
+    return s + companyCurrentCap(c) * (c.customWeight / 100);
+  }, 0);
+}
+
+function initialTotalCap() {
+  return state.companies.reduce(function(s, c) { return s + c.baseCap; }, 0);
+}
+
+function initialPortfolioValue() {
+  if (state.mode === 'cap') {
+    return initialTotalCap() * (state.investFraction / 100);
+  }
+  return state.companies.reduce(function(s, c) {
+    return s + c.baseCap * (c.customWeight / 100);
+  }, 0);
+}
+
+function formatB(v) {
+  if (v >= 1000) return (v / 1000).toFixed(1).replace('.', ',') + ' T$';
+  return v.toFixed(0) + ' G$';
+}
+
+function renderSummary() {
+  var mc = totalMarketCap();
+  var pv = portfolioValue();
+  var imc = initialTotalCap();
+  var ipv = initialPortfolioValue();
+  var mReturn = (mc - imc) / imc * 100;
+  var pReturn = (pv - ipv) / ipv * 100;
+  var match = Math.abs(mReturn - pReturn) < 0.1;
+  var retClass = match ? 'match' : 'diverge';
+
+  document.getElementById('summary').innerHTML =
+    '<div class="summary-card">' +
+      '<div class="label">Valeur du marché</div>' +
+      '<div class="value">' + formatB(mc) + '</div>' +
+    '</div>' +
+    '<div class="summary-card">' +
+      '<div class="label">Votre portefeuille</div>' +
+      '<div class="value">' + formatB(pv) + '</div>' +
+    '</div>' +
+    '<div class="summary-card">' +
+      '<div class="label">Rendement du marché</div>' +
+      '<div class="value ' + retClass + '">' + (mReturn >= 0 ? '+' : '') + mReturn.toFixed(1).replace('.', ',') + ' %</div>' +
+    '</div>' +
+    '<div class="summary-card">' +
+      '<div class="label">Rendement du portefeuille</div>' +
+      '<div class="value ' + retClass + '">' + (pReturn >= 0 ? '+' : '') + pReturn.toFixed(1).replace('.', ',') + ' %</div>' +
+    '</div>';
+}
+
+var BASE_BAR_W = 500;
+var INITIAL_CAP = initialTotalCap();
+
+function renderViz() {
+  var svg = document.getElementById('vizSvg');
+  var padL = 10, padR = 10, padT = 30;
+  var drawH = 320;
+  var gap = 3;
+  var totalGaps = (state.companies.length - 1) * gap;
+  var mc = totalMarketCap();
+  var marketRatio = mc / INITIAL_CAP;
+  var barAreaW = BASE_BAR_W * marketRatio;
+  var totalW = padL + barAreaW + totalGaps + padR;
+  var totalH = padT + drawH + 50;
+
+  svg.setAttribute('width', totalW);
+  svg.setAttribute('height', totalH);
+  svg.setAttribute('viewBox', '0 0 ' + totalW + ' ' + totalH);
+
+  var html = '';
+  var x = padL;
+
+  state.companies.forEach(function(c, i) {
+    var ccap = companyCurrentCap(c);
+    var w = (ccap / INITIAL_CAP) * BASE_BAR_W;
+    var fillPct = state.mode === 'cap' ? state.investFraction : c.customWeight;
+    var fillH = drawH * (fillPct / 100);
+    var emptyH = drawH - fillH;
+
+    html += '<rect x="' + x + '" y="' + padT + '" width="' + w + '" height="' + drawH + '" fill="#e8ecf1" rx="3"/>';
+    html += '<rect x="' + x + '" y="' + (padT + emptyH) + '" width="' + w + '" height="' + fillH + '" fill="' + c.color + '" opacity="0.85" rx="3"/>';
+    html += '<rect x="' + x + '" y="' + padT + '" width="' + w + '" height="' + drawH + '" fill="none" stroke="#bcc5d3" stroke-width="1.5" rx="3"/>';
+
+    var textX = x + w / 2;
+    var nameY = padT + drawH + 18;
+    var pctY = padT + drawH + 34;
+    var fontSize = w < 40 ? 9 : (w < 60 ? 10 : 12);
+
+    html += '<text x="' + textX + '" y="' + nameY + '" text-anchor="middle" font-size="' + fontSize + '" font-weight="600" fill="#333">' + c.name + '</text>';
+    html += '<text x="' + textX + '" y="' + pctY + '" text-anchor="middle" font-size="10" fill="#888">' + fillPct.toFixed(0) + ' %</text>';
+
+    if (w > 30) {
+      var capLabel = ccap >= 1000
+        ? (ccap / 1000).toFixed(1).replace('.', ',') + ' T'
+        : Math.round(ccap) + ' G';
+      html += '<text x="' + textX + '" y="' + (padT + 18) + '" text-anchor="middle" font-size="10" fill="#555">' + capLabel + '</text>';
+    }
+
+    x += w + gap;
+  });
+
+  var lineEndX = padL + barAreaW + totalGaps;
+  html += '<line x1="' + padL + '" y1="' + padT + '" x2="' + lineEndX + '" y2="' + padT + '" stroke="#16213e" stroke-width="2" stroke-dasharray="6,3"/>';
+
+  svg.innerHTML = html;
+}
+
+function buildCompanySliders() {
+  var el = document.getElementById('companySliders');
+  var html = '';
+  state.companies.forEach(function(c, i) {
+    html +=
+      '<div class="control-row">' +
+        '<label><span class="company-color-dot" style="background:' + c.color + '"></span>' + c.name + '</label>' +
+        '<input type="range" min="10" max="300" value="100" step="1" oninput="onCompanyCapChange(' + i + ', this.value)">' +
+        '<span class="val" id="capVal' + i + '">\u00d71,0</span>' +
+      '</div>';
+  });
+  el.innerHTML = html;
+}
+
+function buildCustomSliders() {
+  var el = document.getElementById('customSliders');
+  var html = '';
+  state.companies.forEach(function(c, i) {
+    html +=
+      '<div class="control-row">' +
+        '<label><span class="company-color-dot" style="background:' + c.color + '"></span>' + c.name + '</label>' +
+        '<input type="range" min="0" max="100" value="' + c.customWeight + '" step="1" oninput="onCustomWeight(' + i + ', this.value)">' +
+        '<span class="val" id="cwVal' + i + '">' + c.customWeight + ' %</span>' +
+      '</div>';
+  });
+  el.innerHTML = html;
+}
+
+function onMarketGrowth(v) {
+  state.marketGrowth = Number(v);
+  document.getElementById('marketGrowthVal').textContent = v + ' %';
+  render();
+}
+
+function onInvestFraction(v) {
+  state.investFraction = Number(v);
+  document.getElementById('investFractionVal').textContent = v + ' %';
+  render();
+}
+
+function onCompanyCapChange(i, v) {
+  var mult = Number(v) / 100;
+  state.companies[i].capMultiplier = mult;
+  document.getElementById('capVal' + i).textContent = '\u00d7' + mult.toFixed(1).replace('.', ',');
+  render();
+}
+
+function onCustomWeight(i, v) {
+  state.companies[i].customWeight = Number(v);
+  document.getElementById('cwVal' + i).textContent = v + ' %';
+  render();
+}
+
+function setMode(m) {
+  state.mode = m;
+  document.getElementById('btnCapWeight').classList.toggle('active', m === 'cap');
+  document.getElementById('btnCustom').classList.toggle('active', m === 'custom');
+  document.getElementById('customWeightsSection').classList.toggle('visible', m === 'custom');
+  document.getElementById('investFractionRow').style.display = m === 'cap' ? '' : 'none';
+  render();
+  if (m === 'custom') {
+    document.getElementById('customWeightsSection').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+}
+
+function render() {
+  renderViz();
+  renderSummary();
+}
+
+buildCompanySliders();
+buildCustomSliders();
+render();
+</script>
+</body>
+</html>
